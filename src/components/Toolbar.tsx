@@ -68,6 +68,8 @@ export const Toolbar = ({
 
               case "scanning":
               case "unfollowing":
+              case "following":
+              case "reels":
                 setState({
                   status: "initial",
                 });
@@ -77,7 +79,7 @@ export const Toolbar = ({
           <Logo />
           <div className="logo-text">
             <span>Instagram</span>
-            <span>Unfollowers</span>
+            <span>Automation</span>
           </div>
         </div>
         <div className="toolbar-actions">
@@ -98,6 +100,8 @@ export const Toolbar = ({
                   );
                 case "initial":
                 case "unfollowing":
+                case "following":
+                case "reels":
                   return;
                 default:
                   assertUnreachable(state);
@@ -166,6 +170,8 @@ export const Toolbar = ({
                     searchTerm: e.currentTarget.value,
                   });
                 case "unfollowing":
+                case "following":
+                case "reels":
                   return setState({
                     ...state,
                     searchTerm: e.currentTarget.value,

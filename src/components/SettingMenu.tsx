@@ -55,24 +55,19 @@ export const SettingMenu = ({
           <div className="settings-module">
             <div className="module-header">
               <h3>{t(lang, "settingsTitle")}</h3>
+              <p className="settings-intro">{t(lang, "settingsIntro")}</p>
             </div>
 
             <div className="settings-content">
               <div className="row">
                 <label className="minimun-width">{t(lang, "language")}</label>
                 <select
-                  style={{
-                    background: "rgba(255, 255, 255, 0.1)",
-                    color: "#fff",
-                    border: "1px solid rgba(255, 255, 255, 0.2)",
-                    borderRadius: "4px",
-                    padding: "4px 8px",
-                  }}
+                  className="settings-select"
                   value={lang}
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onLanguageChange(e.currentTarget.value as Language)}
                 >
-                  <option value="en" style={{ background: "#222" }}>English (EN)</option>
-                  <option value="es" style={{ background: "#222" }}>Español (ES)</option>
+                  <option value="en">English (EN)</option>
+                  <option value="es">Español (ES)</option>
                 </select>
               </div>
 

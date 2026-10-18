@@ -13,6 +13,7 @@ import {
   DEFAULT_TIME_TO_WAIT_AFTER_FIVE_UNFOLLOWS,
   DEFAULT_USERS_PER_SEARCH_CYCLE,
   FOLLOWERS_PAGE_SAFETY_LIMIT,
+  FOLLOW_LIST_PAGE_COUNT,
   FOLLOWING_PAGE_SAFETY_LIMIT,
   CHECKS_BEFORE_LONG_SLEEP,
   INSTAGRAM_ASBD_ID,
@@ -24,14 +25,20 @@ import {
   addFollowerToIndex,
   assertUnreachable,
   createFollowerIndex,
+  extractUserIdentities,
   fetchFriendshipsPage,
+  followUser,
   FriendshipsListKind,
   FriendshipsPage,
   getCookie,
   getCurrentPageUnfollowers,
   getUsersForDisplay,
   InstagramApiError,
+  InstagramProfile,
+  isActionBlockedResponse,
   isUserInFollowerIndex,
+  parseFollowTargets,
+  profileForFollowToken,
   RawFriendshipUser,
   rawFriendshipUserToUserNode,
   sleep,
@@ -42,9 +49,12 @@ import { State } from "./model/state";
 import { Searching } from "./components/Searching";
 import { Toolbar } from "./components/Toolbar";
 import { Unfollowing } from "./components/Unfollowing";
+import { Following } from "./components/Following";
+import { Reels } from "./components/Reels";
 import { Timings } from "./model/timings";
 import { loadCachedScanResults, loadTimings, loadWhitelist, saveCachedScanResults, saveTimings, saveWhitelist } from "./utils/whitelist-manager";
 import { getInitialLanguage, Language, saveLanguage, t } from "./utils/i18n";
+import { runReelCollabs } from "./utils/reels-outreach";
 
 const LOCAL_PREVIEW_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const isLocalPreview = LOCAL_PREVIEW_HOSTS.has(location.hostname);
@@ -176,6 +186,12 @@ function App() {
     case "unfollowing":
       isActiveProcess = state.percentage < 100;
       break;
+    case "following":
+      isActiveProcess = state.outcome === "running";
+      break;
+    case "reels":
+      isActiveProcess = state.outcome === "running";
+      break;
     default:
       assertUnreachable(state);
   }
@@ -250,6 +266,74 @@ function App() {
     });
   };
 
+  const onFollow = (rawTargets: string) => {
+    if (state.status !== "initial") {
+      return;
+    }
+    const parsed = parseFollowTargets(rawTargets);
+    if (parsed.targets.length === 0) {
+      setToast({
+        show: true,
+        text: rawTargets.trim() ? t(lang, "invalidUsername") : t(lang, "usernameRequired"),
+      });
+      return;
+    }
+    if (!confirm(t(lang, "followConfirm", parsed.targets.length))) {
+      return;
+    }
+    if (parsed.invalid.length > 0) {
+      setToast({ show: true, text: t(lang, "someTargetsIgnored", parsed.invalid.length) });
+    }
+    scanningPausedRef.current = false;
+    setScanningPaused(false);
+    setState({
+      status: "following",
+      targets: parsed.targets,
+      targetIndex: 0,
+      targetUsername: parsed.targets[0],
+      missedTargets: [],
+      searchTerm: "",
+      percentage: 0,
+      followLog: [],
+      filter: {
+        showSucceeded: true,
+        showFailed: true,
+      },
+      outcome: "running",
+      error: null,
+      followedCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+    });
+  };
+
+  const onReels = () => {
+    if (state.status !== "initial") {
+      return;
+    }
+    if (!confirm(t(lang, "reelsConfirm"))) {
+      return;
+    }
+    scanningPausedRef.current = false;
+    setScanningPaused(false);
+    setState({
+      status: "reels",
+      searchTerm: "",
+      percentage: 0,
+      outcome: "running",
+      banner: null,
+      log: [],
+      showSent: true,
+      showSkipped: false,
+      showFailed: true,
+      checkedCount: 0,
+      sentCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+      currentUsername: "",
+    });
+  };
+
   const handleScanFilter = (e: ChangeEvent<HTMLInputElement>) => {
     if (state.status !== "scanning") {
       return;
@@ -275,8 +359,24 @@ function App() {
     });
   };
 
+  const handleReelsFilter = (e: ChangeEvent<HTMLInputElement>) => {
+    if (state.status !== "reels") {
+      return;
+    }
+    const name = e.currentTarget.name;
+    if (name !== "showSent" && name !== "showSkipped" && name !== "showFailed") {
+      return;
+    }
+    setState({
+      ...state,
+      showSent: name === "showSent" ? e.currentTarget.checked : state.showSent,
+      showSkipped: name === "showSkipped" ? e.currentTarget.checked : state.showSkipped,
+      showFailed: name === "showFailed" ? e.currentTarget.checked : state.showFailed,
+    });
+  };
+
   const handleUnfollowFilter = (e: ChangeEvent<HTMLInputElement>) => {
-    if (state.status !== "unfollowing") {
+    if (state.status !== "unfollowing" && state.status !== "following") {
       return;
     }
     setState({
@@ -714,12 +814,7 @@ function App() {
             credentials: "same-origin",
           });
           const data = (await res.json().catch(() => null)) as any;
-          const isActionBlocked =
-            res.status === 429 ||
-            res.status === 400 ||
-            data?.status === "fail" ||
-            data?.spam === true ||
-            /feedback_required|checkpoint|action_blocked|block/i.test(data?.message ?? "");
+          const isActionBlocked = isActionBlockedResponse(res.status, data);
 
           const success = res.ok && data?.status !== "fail" && !isActionBlocked;
           if (!success) {
@@ -789,10 +884,526 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const finish = (
+      outcome: "completed" | "blocked" | "failed" | "incomplete",
+      error: "missing" | "list" | "lookup" | null,
+      counts: { readonly followed: number; readonly failed: number; readonly skipped: number },
+      toastText: string,
+      missedTargets?: readonly string[],
+    ) => {
+      setState(prevState => {
+        if (prevState.status !== "following") {
+          return prevState;
+        }
+        return {
+          ...prevState,
+          outcome,
+          error,
+          percentage: outcome === "completed" ? 100 : prevState.percentage,
+          followedCount: counts.followed,
+          failedCount: counts.failed,
+          skippedCount: counts.skipped,
+          missedTargets: missedTargets ?? prevState.missedTargets,
+        };
+      });
+      setToast({ show: true, text: toastText });
+    };
+
+    const progressFor = (seen: number, followerCount: number | null): number => {
+      if (followerCount && followerCount > 0) {
+        return Math.min(99, Math.round((seen / followerCount) * 100));
+      }
+      return Math.min(99, Math.round(99 * (1 - 1 / (1 + seen / 150))));
+    };
+
+    const waitIfPaused = async () => {
+      while (scanningPausedRef.current && !cancelled) {
+        await sleep(1000);
+      }
+    };
+
+    const sleepBetweenFollows = async (attemptCount: number) => {
+      await sleep(
+        Math.floor(Math.random() * (timings.timeBetweenUnfollows * 1.2 - timings.timeBetweenUnfollows)) +
+          timings.timeBetweenUnfollows,
+      );
+      if (attemptCount % 5 === 0) {
+        setToast({
+          show: true,
+          text: t(lang, "sleepingSafety", `${Math.round(timings.timeToWaitAfterFiveUnfollows / 60000)}m`),
+        });
+        await sleep(timings.timeToWaitAfterFiveUnfollows);
+        if (!cancelled) {
+          setToast({ show: false });
+        }
+      }
+    };
+
+    const paceNextPage = async () => {
+      await waitIfPaused();
+      if (cancelled) {
+        return;
+      }
+      await sleep(Math.floor(Math.random() * 700) + 300);
+      await sleep(
+        Math.floor(Math.random() * (timings.timeBetweenSearchCycles - timings.timeBetweenSearchCycles * 0.7)) +
+          timings.timeBetweenSearchCycles,
+      );
+    };
+
+    const fetchFollowersPage = async (userId: string, maxId?: string) => {
+      let retries = 0;
+      const maxRetries = 3;
+      while (!cancelled) {
+        try {
+          return {
+            ok: true as const,
+            page: await fetchFriendshipsPage("followers", maxId, FOLLOW_LIST_PAGE_COUNT, userId),
+          };
+        } catch (e: any) {
+          const status = e?.status;
+          const message = String(e?.message ?? "");
+          const isRateLimitOrSoftBlock =
+            (e instanceof InstagramApiError || e?.name === "InstagramApiError") &&
+            (status === 429 || /feedback_required|checkpoint|rate limit|please wait/i.test(message));
+          const isNetworkError = e instanceof TypeError || /fetch|network/i.test(message);
+          const isTransient = isRateLimitOrSoftBlock || isNetworkError;
+          if (isTransient && retries < maxRetries) {
+            retries++;
+            const waitSeconds = isRateLimitOrSoftBlock ? RATE_LIMIT_COOLDOWN_SECONDS * retries : 5 * retries;
+            for (let sec = waitSeconds; sec > 0; sec--) {
+              if (cancelled) {
+                return { ok: false as const, blocked: false };
+              }
+              setToast({ show: true, text: t(lang, "rateLimitPause", sec) });
+              await sleep(1000);
+            }
+            setToast({ show: false });
+            continue;
+          }
+          console.error(`followers request failed for ${userId}:`, e);
+          const hardBlock = /feedback_required|checkpoint|action_blocked/i.test(message);
+          return { ok: false as const, blocked: hardBlock };
+        }
+      }
+      return { ok: false as const, blocked: false };
+    };
+
+    const run = async () => {
+      if (state.status !== "following") {
+        return;
+      }
+      const targets = state.targets;
+      const targetLabel = (value: string) => (/^\d+$/.test(value) ? value : `@${value}`);
+      const overallPercentage = (targetIndex: number, inner: number) =>
+        Math.min(99, Math.round(((targetIndex + inner / 100) / Math.max(targets.length, 1)) * 100));
+
+      let followed = 0;
+      let failed = 0;
+      let skipped = 0;
+      let followAttempts = 0;
+      let consecutiveBlocks = 0;
+      const missedTargets: string[] = [];
+      const seenIds = new Set<string>();
+
+      const remember = (targetIndex: number, label: string, inner: number) => {
+        setState(prevState => {
+          if (prevState.status !== "following") {
+            return prevState;
+          }
+          return {
+            ...prevState,
+            targetIndex,
+            targetUsername: label,
+            percentage: overallPercentage(targetIndex, inner),
+            followedCount: followed,
+            failedCount: failed,
+            skippedCount: skipped,
+            missedTargets: [...missedTargets],
+          };
+        });
+      };
+
+      const skipTarget = (token: string, targetIndex: number) => {
+        if (!missedTargets.includes(token)) {
+          missedTargets.push(token);
+        }
+        remember(targetIndex, token, 100);
+        setToast({ show: true, text: t(lang, "followTargetSkipped", targetLabel(token)) });
+      };
+
+      if (isLocalPreview) {
+        const previewUsers = _getPreviewUsers().filter(user => !user.follows_viewer).slice(0, 2);
+        for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+          if (cancelled) {
+            return;
+          }
+          const token = targets[targetIndex];
+          remember(targetIndex, token, 0);
+          if (token.toLowerCase() === "missing") {
+            skipTarget(token, targetIndex);
+            continue;
+          }
+          for (let userIndex = 0; userIndex < previewUsers.length; userIndex += 1) {
+            if (cancelled) {
+              return;
+            }
+            await waitIfPaused();
+            await sleep(120);
+            if (cancelled) {
+              return;
+            }
+            const user = previewUsers[userIndex];
+            followed += 1;
+            const inner = Math.round(((userIndex + 1) / previewUsers.length) * 100);
+            setState(prevState => {
+              if (prevState.status !== "following") {
+                return prevState;
+              }
+              return {
+                ...prevState,
+                percentage: overallPercentage(targetIndex, inner),
+                followedCount: followed,
+                failedCount: failed,
+                skippedCount: skipped,
+                followLog: [...prevState.followLog, { user: { ...user, id: `${user.id}-${token}` }, followedSuccessfully: true }],
+              };
+            });
+          }
+        }
+        if (!cancelled) {
+          finish(
+            "completed",
+            null,
+            { followed, failed, skipped },
+            t(lang, "followCompleted", targets.length, followed, skipped, failed, missedTargets.length),
+            missedTargets,
+          );
+        }
+        return;
+      }
+
+      const originalHref = location.href;
+      try {
+      if (getCookie("csrftoken") === null || getCookie("ds_user_id") === null) {
+        finish("failed", "list", { followed: 0, failed: 0, skipped: 0 }, t(lang, "followListFailed", targetLabel(targets[0] ?? "")));
+        return;
+      }
+
+      const viewerId = getCookie("ds_user_id");
+
+      for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+        if (cancelled) {
+          return;
+        }
+        const token = targets[targetIndex];
+        try {
+        remember(targetIndex, token, 0);
+        await waitIfPaused();
+        if (cancelled) {
+          return;
+        }
+
+        let profile: InstagramProfile;
+        try {
+          profile = await profileForFollowToken(token, {
+            shouldAbort: () => cancelled,
+            onCooldown: secondsRemaining => {
+              if (secondsRemaining <= 0) {
+                setToast({ show: false });
+                return;
+              }
+              setToast({ show: true, text: t(lang, "rateLimitPause", secondsRemaining) });
+            },
+          });
+        } catch (e) {
+          console.error(e);
+          if (cancelled || (e instanceof InstagramApiError && e.status === 0)) {
+            return;
+          }
+          if (!cancelled) {
+            skipTarget(token, targetIndex);
+          }
+          continue;
+        }
+        if (cancelled) {
+          return;
+        }
+        remember(targetIndex, profile.username, 0);
+
+        let maxId: string | undefined;
+        let pagesRead = 0;
+
+        while (!cancelled) {
+          await waitIfPaused();
+          if (cancelled) {
+            return;
+          }
+
+          const pageResult = await fetchFollowersPage(profile.id, maxId);
+          if (cancelled) {
+            return;
+          }
+          if (!pageResult.ok) {
+            if (pageResult.blocked) {
+              consecutiveBlocks += 1;
+              if (consecutiveBlocks >= 3) {
+                finish("blocked", null, { followed, failed, skipped }, t(lang, "followActionBlockedWarning"), missedTargets);
+                return;
+              }
+            }
+            if (pagesRead === 0) {
+              skipTarget(profile.username, targetIndex);
+            } else {
+              setToast({ show: true, text: t(lang, "followTargetSkipped", targetLabel(profile.username)) });
+            }
+            break;
+          }
+
+          const page = pageResult.page;
+          const pageUsers = page.users ?? [];
+          pagesRead += 1;
+
+          if (pagesRead === 1 && pageUsers.length === 0) {
+            skipTarget(profile.username, targetIndex);
+            break;
+          }
+
+          const hasMore = Boolean(page.next_max_id) && page.has_more !== false && pageUsers.length > 0;
+          const reachedSafetyCap = pagesRead >= FOLLOWERS_PAGE_SAFETY_LIMIT;
+          const willContinue = hasMore && !reachedSafetyCap;
+          const toFollow: UserNode[] = [];
+
+          for (const raw of pageUsers) {
+            const identity = extractUserIdentities(raw);
+            const alreadySeen =
+              identity.ids.some(id => seenIds.has(id)) || (identity.username !== "" && seenIds.has(identity.username));
+            for (const id of identity.ids) {
+              seenIds.add(id);
+            }
+            if (identity.username) {
+              seenIds.add(identity.username);
+            }
+            if (alreadySeen) {
+              continue;
+            }
+
+            const isViewer = viewerId !== null && identity.ids.includes(viewerId);
+            const alreadyConnected = Boolean(
+              raw.friendship_status?.following || raw.friendship_status?.outgoing_request || identity.ids.includes(profile.id),
+            );
+            if (isViewer || alreadyConnected) {
+              skipped += 1;
+              continue;
+            }
+
+            toFollow.push({
+              ...rawFriendshipUserToUserNode(raw, Boolean(raw.friendship_status?.followed_by)),
+              followed_by_viewer: false,
+              requested_by_viewer: false,
+            });
+          }
+
+          const inner = progressFor(followed + failed + skipped, profile.followerCount);
+          remember(targetIndex, profile.username, inner);
+          setToast({
+            show: true,
+            text: t(lang, "followProgress", targetIndex + 1, targets.length, targetLabel(profile.username), followed, skipped),
+          });
+
+          for (let index = 0; index < toFollow.length; index += 1) {
+            if (cancelled) {
+              return;
+            }
+            await waitIfPaused();
+            if (cancelled) {
+              return;
+            }
+
+            const user = toFollow[index];
+            const csrftoken = getCookie("csrftoken");
+            let success = false;
+            let actionBlocked = false;
+            if (csrftoken === null) {
+              success = false;
+            } else {
+              try {
+                let result = await followUser(user.id);
+                let rateRetries = 0;
+                while (result.rateLimited && rateRetries < 3 && !cancelled) {
+                  rateRetries += 1;
+                  const waitSeconds = RATE_LIMIT_COOLDOWN_SECONDS * rateRetries;
+                  for (let sec = waitSeconds; sec > 0; sec -= 1) {
+                    if (cancelled) {
+                      return;
+                    }
+                    setToast({ show: true, text: t(lang, "rateLimitPause", sec) });
+                    await sleep(1000);
+                  }
+                  setToast({ show: false });
+                  result = await followUser(user.id);
+                }
+                success = result.success;
+                actionBlocked = result.actionBlocked;
+                if (!success) {
+                  console.warn(`Follow for ${user.username} failed:`, result.data);
+                }
+              } catch (e) {
+                console.error(e);
+                success = false;
+              }
+            }
+
+            followAttempts += 1;
+            if (success) {
+              followed += 1;
+              consecutiveBlocks = 0;
+            } else {
+              failed += 1;
+            }
+            if (actionBlocked) {
+              consecutiveBlocks += 1;
+            }
+
+            setState(prevState => {
+              if (prevState.status !== "following") {
+                return prevState;
+              }
+              return {
+                ...prevState,
+                percentage: overallPercentage(targetIndex, progressFor(followed + failed + skipped, profile.followerCount)),
+                followedCount: followed,
+                failedCount: failed,
+                skippedCount: skipped,
+                followLog: [...prevState.followLog, { user, followedSuccessfully: success }],
+              };
+            });
+
+            if (actionBlocked) {
+              if (consecutiveBlocks >= 3) {
+                finish("blocked", null, { followed, failed, skipped }, t(lang, "followActionBlockedWarning"), missedTargets);
+                return;
+              }
+              setToast({ show: true, text: t(lang, "followActionBlockedContinue") });
+              await sleep(timings.timeToWaitAfterFiveUnfollows);
+              if (cancelled) {
+                return;
+              }
+              continue;
+            }
+
+            const lastInPage = index === toFollow.length - 1;
+            if (lastInPage && !willContinue) {
+              break;
+            }
+            await sleepBetweenFollows(followAttempts);
+            if (cancelled) {
+              return;
+            }
+          }
+
+          if (cancelled) {
+            return;
+          }
+          if (!willContinue) {
+            if (reachedSafetyCap && hasMore) {
+              setToast({ show: true, text: t(lang, "followTargetSkipped", targetLabel(profile.username)) });
+            }
+            break;
+          }
+
+          maxId = page.next_max_id;
+          await paceNextPage();
+        }
+        } catch (e) {
+          console.error(`Follow target ${token} failed:`, e);
+          if (!cancelled) {
+            skipTarget(token, targetIndex);
+          }
+        }
+      }
+
+      if (!cancelled) {
+        finish(
+          "completed",
+          null,
+          { followed, failed, skipped },
+          t(lang, "followCompleted", targets.length, followed, skipped, failed, missedTargets.length),
+          missedTargets,
+        );
+      }
+      } finally {
+        if (location.href !== originalHref) {
+          history.replaceState(history.state, "", originalHref);
+        }
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+    // Dependency array not entirely legit, but works this way. TODO: Find a way to fix.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const waitIfPaused = async () => {
+      while (scanningPausedRef.current && !cancelled) {
+        await sleep(1000);
+      }
+    };
+
+    const run = async () => {
+      if (state.status !== "reels") {
+        return;
+      }
+      await runReelCollabs({
+        preview: isLocalPreview,
+        lang,
+        timings,
+        shouldAbort: () => cancelled,
+        waitIfPaused,
+        onProgress: progress => {
+          if (progress.toast !== undefined) {
+            setToast(progress.toast === null ? { show: false } : { show: true, text: progress.toast });
+          }
+          setState(prevState => {
+            if (prevState.status !== "reels") {
+              return prevState;
+            }
+            return {
+              ...prevState,
+              percentage: progress.percentage,
+              outcome: progress.outcome,
+              banner: progress.banner !== undefined ? progress.banner : prevState.banner,
+              checkedCount: progress.checkedCount,
+              sentCount: progress.sentCount,
+              skippedCount: progress.skippedCount,
+              failedCount: progress.failedCount,
+              currentUsername: progress.currentUsername,
+              log: progress.entry ? [...prevState.log, progress.entry] : prevState.log,
+            };
+          });
+        },
+      });
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status]);
+
   let markup: React.JSX.Element;
   switch (state.status) {
     case "initial":
-      markup = <NotSearching onScan={onScan} lang={lang} cachedScan={cachedScan} onLoadCached={onLoadCached}></NotSearching>;
+      markup = <NotSearching onScan={onScan} onFollow={onFollow} onReels={onReels} lang={lang} cachedScan={cachedScan} onLoadCached={onLoadCached}></NotSearching>;
       break;
 
     case "scanning": {
@@ -816,6 +1427,26 @@ function App() {
         handleUnfollowFilter={handleUnfollowFilter}
         lang={lang}
       ></Unfollowing>;
+      break;
+
+    case "following":
+      markup = <Following
+        state={state}
+        scanningPaused={scanningPaused}
+        pauseScan={pauseScan}
+        handleLogFilter={handleUnfollowFilter}
+        lang={lang}
+      ></Following>;
+      break;
+
+    case "reels":
+      markup = <Reels
+        state={state}
+        scanningPaused={scanningPaused}
+        pauseScan={pauseScan}
+        handleFilter={handleReelsFilter}
+        lang={lang}
+      ></Reels>;
       break;
 
     default:
@@ -852,7 +1483,7 @@ function App() {
 if (location.hostname !== INSTAGRAM_HOSTNAME && !isLocalPreview) {
   alert("Can be used only on Instagram routes");
 } else {
-  document.title = "InstagramUnfollowers";
+  document.title = "Instagram Automation";
   document.body.innerHTML = "";
   render(<App />, document.body);
 }

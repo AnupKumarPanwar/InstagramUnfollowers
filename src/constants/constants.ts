@@ -7,6 +7,12 @@ export const UNFOLLOWERS_PER_PAGE = 50;
 // for "the instagram.com web client" and is safe to keep public.
 export const INSTAGRAM_WEB_APP_ID = "936619743392459";
 export const INSTAGRAM_ASBD_ID = "129477";
+// Header and doc id from the web client's usePolarisFollowMutation request.
+export const INSTAGRAM_FOLLOW_ASBD_ID = "359341";
+export const POLARIS_FOLLOW_DOC_ID = "26508036048874888";
+// The followers dialog loads 12 people per request. Larger counts are what the
+// script was sending, and Instagram answers those with HTTP 429.
+export const FOLLOW_LIST_PAGE_COUNT = 12;
 
 // Page-count safety cap for loading the viewer's own following and followers lists
 // (see utils/utils.ts and main.tsx).
@@ -15,6 +21,12 @@ export const FOLLOWERS_PAGE_SAFETY_LIMIT = 250;
 // A long safety sleep is taken once every this many scan requests.
 export const CHECKS_BEFORE_LONG_SLEEP = 15;
 export const RATE_LIMIT_COOLDOWN_SECONDS = 30;
+export const REEL_COLLAB_MAX_FOLLOWERS = 2000;
+export const REEL_COLLAB_BIO_KEYWORD = "collab";
+export const REEL_COLLAB_LINK = "https://www.instagram.com/stories/highlights/17909331147509045/";
+export const REELS_PAGE_SAFETY_LIMIT = 80;
+export const REELS_CONTACTED_STORAGE_KEY = "iu_reels-contacted";
+export const REELS_CURSOR_STORAGE_KEY = "iu_reels-cursor";
 export const WHITELISTED_RESULTS_STORAGE_KEY = "iu_whitelisted-results";
 export const TIMINGS_STORAGE_KEY = "iu_timings";
 export const LAST_SCAN_RESULTS_STORAGE_KEY = "iu_last-scan-results";

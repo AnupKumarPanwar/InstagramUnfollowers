@@ -375,23 +375,19 @@ export const Searching = ({
                       )}
                     </span>
                   </div>
-                  <div className="flex column m-medium">
+                  <div className="account-copy">
                     <a
-                      className="fs-xlarge"
+                      className="account-name"
                       target="_blank"
                       href={`/${user.username}`}
                       rel="noreferrer"
                     >
                       {user.username}
+                      {user.is_verified && <span className="verified-badge">✔</span>}
                     </a>
-                    <span className="fs-medium">{user.full_name}</span>
+                    <span className="account-fullname">{user.full_name}</span>
+                    {user.is_private && <span className="private-indicator">{t(lang, "private")}</span>}
                   </div>
-                  {user.is_verified && <div className="verified-badge">✔</div>}
-                  {user.is_private && (
-                    <div className="flex justify-center w-100">
-                      <span className="private-indicator">{t(lang, "private")}</span>
-                    </div>
-                  )}
                 </div>
                 <div className="flex align-center gap-small">
                   <input

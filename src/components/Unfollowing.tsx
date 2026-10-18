@@ -50,37 +50,24 @@ export const Unfollowing = (
         </menu>
       </aside>
       <article className="unfollow-log-container">
-        {state.unfollowLog.length === state.selectedResults.length && (
-          <>
-            <hr />
-            <div className="fs-large p-medium clr-green">{t(lang, "allDone")}</div>
-            <hr />
-          </>
+        {state.unfollowLog.length === state.selectedResults.length && state.selectedResults.length > 0 && (
+          <div className="status-banner is-ok">{t(lang, "allDone")}</div>
         )}
-        {getUnfollowLogForDisplay(state.unfollowLog, state.searchTerm, state.filter).map(
-          (entry, index) =>
-            entry.unfollowedSuccessfully ? (
-              <div className="p-medium" key={entry.user.id}>
-                {t(lang, "unfollowed")}
-                <a
-                  className="clr-inherit"
-                  target="_blank"
-                  href={`/${entry.user.username}`}
-                  rel="noreferrer"
-                >
-                  &nbsp;{entry.user.username}
-                </a>
-                <span className="clr-cyan">
-                  &nbsp; [{index + 1}/{state.selectedResults.length}]
-                </span>
-              </div>
-            ) : (
-              <div className="p-medium clr-red" key={entry.user.id}>
-                {t(lang, "failedToUnfollow")} {entry.user.username} [{index + 1}/
-                {state.selectedResults.length}]
+        <div className="log-list">
+          {getUnfollowLogForDisplay(state.unfollowLog, state.searchTerm, state.filter).map(
+            (entry, index) => (
+              <div className={`log-entry ${entry.unfollowedSuccessfully ? "is-ok" : "is-bad"}`} key={entry.user.id}>
+                <span className="log-index">{index + 1}</span>
+                <div className="log-copy">
+                  <a target="_blank" href={`/${entry.user.username}`} rel="noreferrer">
+                    {entry.user.username}
+                  </a>
+                  <span>{entry.unfollowedSuccessfully ? t(lang, "unfollowed") : t(lang, "failedToUnfollow")}</span>
+                </div>
               </div>
             ),
-        )}
+          )}
+        </div>
       </article>
     </section>
   );

@@ -1,4 +1,4 @@
-# 📱 Instagram Unfollowers
+# Instagram Automation
 
 [![Maintenance](https://img.shields.io/maintenance/yes/2026)](https://github.com/davidarroyo1234/InstagramUnfollowers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -10,7 +10,7 @@
 <a name="-english"></a>
 ## 🇬🇧 English
 
-A nifty tool that lets you see who doesn't follow you back on Instagram.  
+A browser tool for Instagram follow and unfollow jobs. Review who does not follow you back, or follow another account's followers page by page.  
 <u>Browser-based and requires no downloads or installations!</u>
 
 > ⚡ **Live Streaming & Fast Cache:** Accounts now appear dynamically on screen in real time as batches are fetched from Instagram. In addition, completed scans are cached locally so you can reload your audit instantly (0ms) without making unnecessary API calls!
@@ -50,7 +50,8 @@ For Android users who want to use it on mobile:
 
 ### ✨ Features
 
-- 🔍 **Scan & Detect**: Accurately identifies users who don't follow you back.
+- 🔍 **Non-followers**: Finds accounts that do not follow you back, then unfollows only the ones you select.
+- ➕ **Follow their followers**: Enter a username and follow that account's followers page by page, with the same delays and safety stops.
 - ⚡ **Live Progressive Streaming**: Accounts stream dynamically onto your screen as each batch arrives, eliminating blank waiting screens on large accounts.
 - ⚡ **Instant Local Cache (0ms load)**: Re-open and review previously completed audits instantly without re-scraping from scratch.
 - 🌐 **Bilingual (EN / ES)**: Native English and Spanish support with instant switching.
@@ -76,7 +77,7 @@ For Android users who want to use it on mobile:
 <a name="-español"></a>
 ## 🇪🇸 Español
 
-Una herramienta práctica y ligera que te permite ver quién no te sigue de vuelta en Instagram.  
+Una herramienta de navegador para trabajos de follow y unfollow en Instagram. Revisa quién no te sigue de vuelta, o sigue a los seguidores de otra cuenta página por página.  
 <u>¡Funciona directamente en tu navegador y no requiere descargas ni instalaciones externas!</u>
 
 > ⚡ **Transmisión en vivo y caché rápido:** Ahora las cuentas aparecen dinámicamente en pantalla en tiempo real a medida que se descargan los lotes de Instagram. Además, los escaneos completados se guardan localmente para recargar tu lista al instante (0ms) sin hacer peticiones innecesarias.
@@ -116,7 +117,8 @@ Para usuarios de Android que quieran utilizarlo desde el móvil:
 
 ### ✨ Características Principales
 
-- 🔍 **Detección precisa**: Encuentra rápidamente a quienes sigues pero no te siguen de vuelta.
+- 🔍 **No te siguen**: Encuentra cuentas que no te siguen de vuelta y deja de seguir solo las que elijas.
+- ➕ **Seguir a sus seguidores**: Escribe un usuario y sigue a sus seguidores página por página, con las mismas pausas y protecciones.
 - ⚡ **Carga progresiva en vivo**: Las cuentas aparecen en pantalla en tiempo real mientras se descargan, evitando pantallas en blanco en cuentas con muchos seguidos.
 - ⚡ **Caché local instantáneo (0ms)**: Carga escaneos anteriores con un solo clic desde la pantalla inicial sin hacer peticiones innecesarias.
 - 🌐 **Soporte Bilingüe (Español / Inglés)**: Interfaz completamente en español e inglés con cambio instantáneo.
